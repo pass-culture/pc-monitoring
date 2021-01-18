@@ -15,31 +15,21 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"regexp"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/grafana/grafana/pkg/infra/log"
+	"github.com/grafana/grafana/pkg/models"
 	"github.com/grafana/grafana/pkg/setting"
-	"gopkg.in/macaron.v1"
 
 	gocache "github.com/patrickmn/go-cache"
 )
 
-var gravatarSource string
-
-func UpdateGravatarSource() {
-	srcCfg := "//secure.gravatar.com/avatar/"
-
-	gravatarSource = srcCfg
-	if strings.HasPrefix(gravatarSource, "//") {
-		gravatarSource = "http:" + gravatarSource
-	} else if !strings.HasPrefix(gravatarSource, "http://") &&
-		!strings.HasPrefix(gravatarSource, "https://") {
-		gravatarSource = "http://" + gravatarSource
-	}
-}
+const (
+	gravatarSource = "https://secure.gravatar.com/avatar/"
+)
 
 // Avatar represents the avatar object.
 type Avatar struct {
@@ -83,9 +73,15 @@ type CacheServer struct {
 	cache    *gocache.Cache
 }
 
-func (this *CacheServer) Handler(ctx *macaron.Context) {
-	urlPath := ctx.Req.URL.Path
-	hash := urlPath[strings.LastIndex(urlPath, "/")+1:]
+var validMD5 = regexp.MustCompile("^[a-fA-F0-9]{32}$")
+
+func (this *CacheServer) Handler(ctx *models.ReqContext) {
+	hash := ctx.Params("hash")
+
+	if len(hash) != 32 || !validMD5.MatchString(hash) {
+		ctx.JsonApiErr(404, "Avatar not found", nil)
+		return
+	}
 
 	var avatar *Avatar
 	obj, exists := this.cache.Get(hash)
@@ -126,8 +122,6 @@ func (this *CacheServer) Handler(ctx *macaron.Context) {
 }
 
 func NewCacheServer() *CacheServer {
-	UpdateGravatarSource()
-
 	return &CacheServer{
 		notFound: newNotFound(),
 		cache:    gocache.New(time.Hour, time.Hour*2),
